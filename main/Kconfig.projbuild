@@ -230,6 +230,9 @@ choice BOARD_TYPE
     config BOARD_TYPE_ESP32_S31_KORVO_1
         bool "Espressif ESP32-S31-Korvo-1"
         depends on IDF_TARGET_ESP32S31
+    config BOARD_TYPE_CYD_LINK_C3
+        bool "CYD Link C3 (INMP441 + UART ke CYD)"
+        depends on IDF_TARGET_ESP32C3
     config BOARD_TYPE_ESP_HI
         bool "Espressif ESP-HI"
         depends on IDF_TARGET_ESP32C3
