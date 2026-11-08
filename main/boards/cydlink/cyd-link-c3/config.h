@@ -19,4 +19,9 @@
 
 #define BOOT_BUTTON_GPIO  GPIO_NUM_9
 
+// LED biru bawaan Super Mini (GPIO8). Biasanya menyala saat pin LOW (active low).
+// Kalau di boardmu terbalik, ubah LED_ACTIVE_LOW menjadi 0.
+#define LED_GPIO          GPIO_NUM_8
+#define LED_ACTIVE_LOW    1
+
 #endif // _BOARD_CONFIG_H_

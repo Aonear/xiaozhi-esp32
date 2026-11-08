@@ -5,6 +5,7 @@
 #include "application.h"
 #include "button.h"
 #include "config.h"
+#include "gpio_led.h"
 
 #include <esp_log.h>
 #include <esp_timer.h>
@@ -73,6 +74,11 @@ public:
         display_ = new CydDisplay();
         InitializeButtons();
         InitializeLink();
+    }
+
+    virtual Led* GetLed() override {
+        static GpioLed led(LED_GPIO, LED_ACTIVE_LOW != 0);
+        return &led;
     }
 
     virtual Display* GetDisplay() override {
