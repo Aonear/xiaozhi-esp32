@@ -3,7 +3,7 @@ name: Build CYD Link C3
 on:
   workflow_dispatch:
   push:
-   branches: [cyd-link]
+    branches: [cyd-link]
 
 jobs:
   build:
@@ -17,7 +17,7 @@ jobs:
         run: |
           git config --global --add safe.directory "$GITHUB_WORKSPACE"
           . "$IDF_PATH/export.sh"
-         python scripts/build.py cydlink/cyd-link-c3 --name cyd-link-c3 --language id-ID --wake-word wn9s_hiesp --build-options-json '{"wifi_provisioning":"hotspot"}'
+          python scripts/build.py cydlink/cyd-link-c3 --name cyd-link-c3 --language id-ID --wake-word wn9s_hiesp --build-options-json '{"wifi_provisioning":"hotspot"}'
       - name: Upload firmware
         uses: actions/upload-artifact@v4
         if: always()
