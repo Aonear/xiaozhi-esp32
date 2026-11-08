@@ -2,6 +2,8 @@ name: Build CYD Link C3
 
 on:
   workflow_dispatch:
+  push:
+   branches: [cyd-link]
 
 jobs:
   build:
