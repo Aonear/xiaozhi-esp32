@@ -23,9 +23,9 @@ jobs:
         shell: bash
         run: |
           . "$IDF_PATH/export.sh"
-          ELF=$(find . -name xiaozhi.elf | head -n1)
+          ELF=$(find . -name xiaozhi.elf | head -n 1)
           echo "ELF = $ELF"
-          riscv32-esp-elf-addr2line -pfiaC -e "$ELF" 0x42006714 0x4200b4a4 0x42138606
+          riscv32-esp-elf-addr2line -pfiaC -e "$ELF" 0x42006714 0x4200b4a4 0x4200fa26 0x420186f6 0x421373fc 0x4201bbc8 0x42017d7e 0x42018196 0x42018188 0x4201817a 0x4201816c 0x420056ca 0x42006ccc
       - name: Upload firmware
         uses: actions/upload-artifact@v4
         if: always()
