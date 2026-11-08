@@ -5,7 +5,7 @@
 #include "application.h"
 #include "button.h"
 #include "config.h"
-#include "gpio_led.h"
+#include "cyd_status_led.h"
 
 #include <esp_log.h>
 #include <esp_timer.h>
@@ -77,7 +77,7 @@ public:
     }
 
     virtual Led* GetLed() override {
-        static GpioLed led(LED_GPIO, LED_ACTIVE_LOW != 0);
+        static CydStatusLed led(LED_GPIO, LED_ACTIVE_LOW != 0);
         return &led;
     }
 
