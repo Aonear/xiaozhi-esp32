@@ -5,6 +5,7 @@
 #include <cstdint>
 
 #define TAG "UartAudioCodec"
+#define MIC_SHIFT 12   // 12 = penguatan bawaan XiaoZhi. Kalau mic sering kliping (lihat Info di CYD), naikkan ke 13 atau 14 (-6 dB / -12 dB)
 
 UartAudioCodec::UartAudioCodec(int input_sample_rate, int output_sample_rate,
                                gpio_num_t mic_sck, gpio_num_t mic_ws, gpio_num_t mic_din) {
@@ -75,10 +76,20 @@ int UartAudioCodec::Read(int16_t* dest, int samples) {
         return 0;
     }
     samples = bytes_read / sizeof(int32_t);
+    int peak = 0;
+    uint16_t clips = 0;
     for (int i = 0; i < samples; i++) {
-        int32_t value = bit32_buffer[i] >> 12;
+        int32_t value = bit32_buffer[i] >> MIC_SHIFT;
+        if (value > INT16_MAX || value < -INT16_MAX) clips++;
         dest[i] = (value > INT16_MAX) ? INT16_MAX : (value < -INT16_MAX) ? -INT16_MAX : (int16_t)value;
+        int a = dest[i] < 0 ? -dest[i] : dest[i];
+        if (a > peak) peak = a;
     }
+    // pengukur level mikrofon, ditampilkan di halaman Info CYD
+    auto& link = CydLink::GetInstance();
+    uint8_t p = (uint8_t)(peak * 100 / 32767);
+    if (p > link.mic_peak.load()) link.mic_peak.store(p);
+    if (clips) link.mic_clips.fetch_add(clips);
     return samples;
 }
 

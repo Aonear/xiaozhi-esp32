@@ -15,7 +15,11 @@ enum : uint8_t {
     AIP_AUDIO_START = 0x03,
     AIP_AUDIO_DATA = 0x04,
     AIP_AUDIO_END = 0x05,
+    AIP_NAV = 0x06,     // C3 -> CYD: [id halaman]
+    AIP_SET = 0x07,     // C3 -> CYD: [jenis, nilai]
+    AIP_INFO = 0x08,    // C3 -> CYD: [heap KB (2B), rssi (1B), mic puncak (1B), kliping (2B)]
     AIP_TOUCH = 0x81,
+    AIP_POWER = 0x83,   // CYD -> C3: [1 = tidur, 0 = bangun]
     AIP_BUFFER = 0x82,
 };
 
@@ -39,7 +43,7 @@ void CydLink::Init(gpio_num_t tx, gpio_num_t rx, int baud) {
     tx_mutex_ = xSemaphoreCreateMutex();
     audio_mutex_ = xSemaphoreCreateMutex();
     inited_ = true;
-    xTaskCreate(RxTaskEntry, "cyd_link", 3072, this, 4, nullptr);
+    xTaskCreate(RxTaskEntry, "cyd_link", 4096, this, 4, nullptr);
     ESP_LOGI(TAG, "UART ke CYD siap (%d baud)", baud);
 }
 
@@ -68,6 +72,21 @@ void CydLink::SendText(uint8_t role, const char* text) {
     if (n > sizeof(buf) - 1) n = sizeof(buf) - 1;
     memcpy(buf + 1, text, n);
     Send(AIP_TEXT, buf, (uint16_t)(n + 1));
+}
+
+void CydLink::SendNav(uint8_t page) {
+    Send(AIP_NAV, &page, 1);
+}
+
+void CydLink::SendSet(uint8_t kind, uint8_t value) {
+    uint8_t pl[2] = {kind, value};
+    Send(AIP_SET, pl, 2);
+}
+
+void CydLink::SendInfo(uint16_t heap_kb, int8_t rssi, uint8_t mic_peak, uint16_t mic_clips) {
+    uint8_t pl[6] = {(uint8_t)(heap_kb & 0xFF), (uint8_t)(heap_kb >> 8), (uint8_t)rssi, mic_peak,
+                     (uint8_t)(mic_clips & 0xFF), (uint8_t)(mic_clips >> 8)};
+    Send(AIP_INFO, pl, 6);
 }
 
 void CydLink::AudioWrite(const int16_t* data, int samples, int rate, int volume_percent) {
@@ -114,6 +133,9 @@ void CydLink::AudioIdleCheck() {
 void CydLink::Handle(uint8_t type, const uint8_t* p, uint16_t n) {
     if (type == AIP_TOUCH && n >= 1) {
         if (touch_cb_) touch_cb_(p[0]);
+    }
+    if (type == AIP_POWER && n >= 1) {
+        if (power_cb_) power_cb_(p[0]);
     }
     // AIP_BUFFER diterima tapi tidak dipakai: laju kirim diatur lewat waktu real-time di AudioWrite
 }
