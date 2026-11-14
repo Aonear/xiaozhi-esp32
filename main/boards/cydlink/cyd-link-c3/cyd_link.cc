@@ -19,6 +19,7 @@ enum : uint8_t {
     AIP_SET = 0x07,     // C3 -> CYD: [jenis, nilai]
     AIP_INFO = 0x08,    // C3 -> CYD: [heap KB (2B), rssi (1B), mic puncak (1B), kliping (2B)]
     AIP_TOUCH = 0x81,
+    AIP_AUTO = 0x84,    // CYD -> C3: [1 = dengar otomatis (halaman AI terbuka), 0 = mati]
     AIP_POWER = 0x83,   // CYD -> C3: [1 = tidur, 0 = bangun]
     AIP_BUFFER = 0x82,
 };
@@ -133,6 +134,9 @@ void CydLink::AudioIdleCheck() {
 void CydLink::Handle(uint8_t type, const uint8_t* p, uint16_t n) {
     if (type == AIP_TOUCH && n >= 1) {
         if (touch_cb_) touch_cb_(p[0]);
+    }
+    if (type == AIP_AUTO && n >= 1) {
+        auto_listen = (p[0] != 0);
     }
     if (type == AIP_POWER && n >= 1) {
         if (power_cb_) power_cb_(p[0]);

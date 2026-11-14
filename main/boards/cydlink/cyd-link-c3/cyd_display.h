@@ -37,17 +37,24 @@ public:
     }
 
 private:
-    // Emosi CYD: 0 netral, 1 senang, 2 sedih, 3 marah, 4 kaget, 5 berpikir, 6 mengantuk
+    // Emosi CYD: 0 netral, 1 senang, 2 sedih, 3 marah, 4 kaget, 5 berpikir, 6 ngantuk,
+    //            7 tertawa, 8 bingung, 9 jatuh cinta, 10 ngambek/malu, 11 kedip genit
     static uint8_t MapEmotion(const char* e) {
         if (!e) return 0;
-        static const char* happy[] = {"happy", "laughing", "funny", "loving", "winking", "cool",
-                                      "relaxed", "delicious", "kissy", "confident", "silly"};
-        for (auto h : happy) if (strcmp(e, h) == 0) return 1;
-        if (strcmp(e, "sad") == 0 || strcmp(e, "crying") == 0) return 2;
-        if (strcmp(e, "angry") == 0) return 3;
-        if (strcmp(e, "surprised") == 0 || strcmp(e, "shocked") == 0 || strcmp(e, "embarrassed") == 0) return 4;
-        if (strcmp(e, "thinking") == 0 || strcmp(e, "confused") == 0) return 5;
-        if (strcmp(e, "sleepy") == 0) return 6;
+        static const struct { const char* name; uint8_t id; } table[] = {
+            {"happy", 1}, {"relaxed", 1}, {"cool", 1}, {"delicious", 1}, {"confident", 1}, {"silly", 1},
+            {"laughing", 7}, {"funny", 7},
+            {"loving", 9}, {"kissy", 9},
+            {"winking", 11},
+            {"sad", 2}, {"crying", 2},
+            {"angry", 3},
+            {"surprised", 4}, {"shocked", 4},
+            {"thinking", 5},
+            {"confused", 8},
+            {"embarrassed", 10},
+            {"sleepy", 6},
+        };
+        for (auto& t : table) if (strcmp(e, t.name) == 0) return t.id;
         return 0;
     }
 };

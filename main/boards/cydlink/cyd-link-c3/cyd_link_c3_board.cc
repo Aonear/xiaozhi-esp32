@@ -147,6 +147,28 @@ private:
                 l.SendInfo((uint16_t)(free_b / 1024), rssi, peak, l.mic_clips.load());
             }
 
+            // 2b) Dengar otomatis: selama halaman AI terbuka di CYD, mulai mendengarkan sendiri saat diam
+            {
+                static int64_t idle_auto_us = 0, last_auto_start_us = 0;
+                static bool was_auto = false;
+                bool want = l.auto_listen.load();
+                auto dev = Application::GetInstance().GetDeviceState();
+                if (want && dev == kDeviceStateIdle) {
+                    if (!idle_auto_us) idle_auto_us = now;
+                    if (now - idle_auto_us > 1200000LL && now - last_auto_start_us > 4000000LL) {
+                        Application::GetInstance().ToggleChatState();   // mulai mendengarkan
+                        last_auto_start_us = now;
+                        idle_auto_us = 0;
+                    }
+                } else {
+                    idle_auto_us = 0;
+                }
+                if (!want && was_auto && dev == kDeviceStateListening) {
+                    Application::GetInstance().ToggleChatState();       // keluar dari halaman AI: berhenti mendengarkan
+                }
+                was_auto = want;
+            }
+
             // 3) Pemulihan memori: kalau memori bebas turun jauh dan asisten sedang diam, restart C3
             static uint32_t baseline = 0;
             static int64_t idle_since_us = 0;
