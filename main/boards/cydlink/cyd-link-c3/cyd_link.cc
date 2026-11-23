@@ -102,9 +102,9 @@ void CydLink::AudioWrite(const int16_t* data, int samples, int rate, int volume_
         play_end_us_ = now;
     }
     if (play_end_us_ < now) play_end_us_ = now;
-    // jangan mengirim lebih dari ~250 ms di depan waktu putar (buffer CYD terbatas)
+    // jangan mengirim lebih dari ~330 ms di depan waktu putar (buffer CYD 24 KB = ~510 ms untuk 16-bit 24 kHz)
     int64_t ahead = play_end_us_ - now;
-    if (ahead > 250000) vTaskDelay(pdMS_TO_TICKS((ahead - 250000) / 1000 + 1));
+    if (ahead > 330000) vTaskDelay(pdMS_TO_TICKS((ahead - 330000) / 1000 + 1));
 
     int vol = volume_percent < 0 ? 0 : (volume_percent > 100 ? 100 : volume_percent);
     uint8_t out[480];                          // 240 sampel 16-bit per paket
