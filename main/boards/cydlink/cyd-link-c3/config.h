@@ -5,7 +5,7 @@
 
 // ESP32-C3 Super Mini + mic INMP441. Suara keluar lewat UART ke CYD (speaker CYD).
 #define AUDIO_INPUT_SAMPLE_RATE  16000
-#define AUDIO_OUTPUT_SAMPLE_RATE 24000   // harus sama dengan sample rate yang dikirim ke CYD
+#define AUDIO_OUTPUT_SAMPLE_RATE 16000   // sama dengan suara dari server (16 kHz): tanpa resampling di C3, kabel UART hanya 32 KB/s
 
 // INMP441 (pin L/R disambung ke GND = kanal kiri)
 #define MIC_I2S_GPIO_SCK  GPIO_NUM_5
