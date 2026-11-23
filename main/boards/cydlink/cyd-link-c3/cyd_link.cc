@@ -22,6 +22,7 @@ enum : uint8_t {
     AIP_AUTO = 0x84,    // CYD -> C3: [1 = dengar otomatis (halaman AI terbuka), 0 = mati]
     AIP_POWER = 0x83,   // CYD -> C3: [1 = tidur, 0 = bangun]
     AIP_BUFFER = 0x82,
+    AIP_CTRL = 0x85,    // CYD -> C3: [butir, nilai]  butir 2 = Bluetooth C3 (1 aktif, 0 mati)
 };
 
 CydLink& CydLink::GetInstance() {
@@ -95,8 +96,8 @@ void CydLink::AudioWrite(const int16_t* data, int samples, int rate, int volume_
     xSemaphoreTake(audio_mutex_, portMAX_DELAY);
     int64_t now = esp_timer_get_time();
     if (!streaming_ || now > play_end_us_ + 400000) {
-        uint8_t pl[2] = {(uint8_t)(rate & 0xFF), (uint8_t)(rate >> 8)};
-        Send(AIP_AUDIO_START, pl, 2);
+        uint8_t pl[3] = {(uint8_t)(rate & 0xFF), (uint8_t)(rate >> 8), 1};   // 1 = PCM 16-bit little-endian
+        Send(AIP_AUDIO_START, pl, 3);
         streaming_ = true;
         play_end_us_ = now;
     }
@@ -106,16 +107,20 @@ void CydLink::AudioWrite(const int16_t* data, int samples, int rate, int volume_
     if (ahead > 250000) vTaskDelay(pdMS_TO_TICKS((ahead - 250000) / 1000 + 1));
 
     int vol = volume_percent < 0 ? 0 : (volume_percent > 100 ? 100 : volume_percent);
-    uint8_t out[480];
+    uint8_t out[480];                          // 240 sampel 16-bit per paket
+    const int per = sizeof(out) / 2;
     int done = 0;
     while (done < samples) {
         int n = samples - done;
-        if (n > (int)sizeof(out)) n = sizeof(out);
+        if (n > per) n = per;
         for (int i = 0; i < n; i++) {
             int32_t v = ((int32_t)data[done + i] * vol) / 100;
-            out[i] = (uint8_t)((v >> 8) + 128);
+            if (v > 32767) v = 32767;
+            if (v < -32768) v = -32768;
+            out[2 * i] = (uint8_t)(v & 0xFF);
+            out[2 * i + 1] = (uint8_t)((v >> 8) & 0xFF);
         }
-        Send(AIP_AUDIO_DATA, out, (uint16_t)n);
+        Send(AIP_AUDIO_DATA, out, (uint16_t)(n * 2));
         done += n;
     }
     play_end_us_ += (int64_t)samples * 1000000 / rate;
@@ -140,6 +145,12 @@ void CydLink::Handle(uint8_t type, const uint8_t* p, uint16_t n) {
     }
     if (type == AIP_POWER && n >= 1) {
         if (power_cb_) power_cb_(p[0]);
+    }
+    if (type == AIP_CTRL && n >= 2) {
+        if (p[0] == 2) {
+            bt_enabled = (p[1] != 0);
+            ESP_LOGI(TAG, "Saklar Bluetooth C3 dari CYD: %s", p[1] ? "aktif" : "mati");
+        }
     }
     // AIP_BUFFER diterima tapi tidak dipakai: laju kirim diatur lewat waktu real-time di AudioWrite
 }

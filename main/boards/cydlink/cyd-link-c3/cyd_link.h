@@ -18,6 +18,7 @@ public:
     void SetTouchCallback(std::function<void(uint8_t)> cb) { touch_cb_ = cb; }
     void SetTickCallback(std::function<void()> cb) { tick_cb_ = cb; }
     void SetPowerCallback(std::function<void(uint8_t)> cb) { power_cb_ = cb; }
+    std::atomic<bool> bt_enabled{false};     // saklar Bluetooth C3 dari CYD (menu Koneksi); dipakai fitur Bluetooth berikutnya
     std::atomic<bool> auto_listen{false};   // CYD di halaman AI: C3 mulai mendengarkan sendiri (tanpa tombol bicara)   // 1 = tidur, 0 = bangun (dari CYD)
 
     void SendState(uint8_t state, uint8_t emotion);
