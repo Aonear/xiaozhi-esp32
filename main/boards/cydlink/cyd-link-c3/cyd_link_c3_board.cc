@@ -8,6 +8,7 @@
 #include "config.h"
 #include "cyd_status_led.h"
 #include "cyd_setup.h"
+#include "cyd_net.h"
 
 #include <esp_log.h>
 #include <esp_timer.h>
@@ -115,6 +116,7 @@ private:
                 esp_restart();
             }
         });
+        CydNet::Init();
         link.SetCtrlCallback([](uint8_t item, uint8_t val) {
             if (item == 3) CydSetup::Request(val != 0);            // mode pengaturan (hotspot CYD-Setup)
             else if (item == 4) CydSetup::ApplyToCyd();            // CYD minta judul/warna/status terbaru
@@ -135,7 +137,7 @@ private:
 
             // 1) WiFi tanpa hemat daya saat sedang bercakap (suara tidak tertahan), hemat daya saat diam
             static int last_ps = -1;
-            int want_ps = (st == 1 || st == 2 || st == 3 || CydSetup::Active()) ? 0 : 1;
+            int want_ps = (st == 1 || st == 2 || st == 3 || CydSetup::Active() || CydNet::Busy()) ? 0 : 1;
             if (want_ps != last_ps &&
                 esp_wifi_set_ps(want_ps == 0 ? WIFI_PS_NONE : WIFI_PS_MIN_MODEM) == ESP_OK) {
                 last_ps = want_ps;

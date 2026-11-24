@@ -23,6 +23,8 @@ enum : uint8_t {
     AIP_AUTO = 0x84,    // CYD -> C3: [1 = dengar otomatis (halaman AI terbuka), 0 = mati]
     AIP_POWER = 0x83,   // CYD -> C3: [1 = tidur, 0 = bangun]
     AIP_BUFFER = 0x82,
+    AIP_NET_DATA = 0x0A,  // C3 -> CYD: [id, jenis, ...] jenis 0 status [2B], 1 data, 2 selesai, 3 gagal
+    AIP_NET_REQ = 0x86,   // CYD -> C3: [op, id, ...] op 1 GET, 2 POST, 3 batal, 4 kredit [2B], 5 baca pengaturan
     AIP_CTRL = 0x85,    // CYD -> C3: [butir, nilai]  butir 2 = Bluetooth C3, 3 = mode pengaturan (1 nyala, 0 mati), 4 = minta konfigurasi
 };
 
@@ -159,6 +161,7 @@ void CydLink::Handle(uint8_t type, const uint8_t* p, uint16_t n) {
             ctrl_cb_(p[0], p[1]);
         }
     }
+    if (type == AIP_NET_REQ && n >= 2 && net_cb_) net_cb_(p, n);
     // AIP_BUFFER diterima tapi tidak dipakai: laju kirim diatur lewat waktu real-time di AudioWrite
 }
 
@@ -170,7 +173,7 @@ void CydLink::RxTaskEntry(void* arg) {
 void CydLink::RxTask() {
     uint8_t st = 0, type = 0, x = 0;
     uint16_t len = 0, idx = 0;
-    uint8_t buf[64];
+    static uint8_t buf[640];
     uint8_t b;
     for (;;) {
         int r = uart_read_bytes(kPort, &b, 1, pdMS_TO_TICKS(100));
