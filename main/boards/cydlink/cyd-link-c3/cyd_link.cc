@@ -18,11 +18,12 @@ enum : uint8_t {
     AIP_NAV = 0x06,     // C3 -> CYD: [id halaman]
     AIP_SET = 0x07,     // C3 -> CYD: [jenis, nilai]
     AIP_INFO = 0x08,    // C3 -> CYD: [heap KB (2B), rssi (1B), mic puncak (1B), kliping (2B)]
+    AIP_CFG = 0x09,     // C3 -> CYD: [jenis, data...] 1 judul (UTF-8), 2 warna aksen RGB, 3 mode pengaturan [1, ssid\0 sandi] / [0], 4 lirik online [0/1]
     AIP_TOUCH = 0x81,
     AIP_AUTO = 0x84,    // CYD -> C3: [1 = dengar otomatis (halaman AI terbuka), 0 = mati]
     AIP_POWER = 0x83,   // CYD -> C3: [1 = tidur, 0 = bangun]
     AIP_BUFFER = 0x82,
-    AIP_CTRL = 0x85,    // CYD -> C3: [butir, nilai]  butir 2 = Bluetooth C3 (1 aktif, 0 mati)
+    AIP_CTRL = 0x85,    // CYD -> C3: [butir, nilai]  butir 2 = Bluetooth C3, 3 = mode pengaturan (1 nyala, 0 mati), 4 = minta konfigurasi
 };
 
 CydLink& CydLink::GetInstance() {
@@ -91,6 +92,10 @@ void CydLink::SendInfo(uint16_t heap_kb, int8_t rssi, uint8_t mic_peak, uint16_t
     Send(AIP_INFO, pl, 6);
 }
 
+void CydLink::SendCfg(const uint8_t* p, uint16_t n) {
+    Send(AIP_CFG, p, n);
+}
+
 void CydLink::AudioWrite(const int16_t* data, int samples, int rate, int volume_percent) {
     if (!inited_) return;
     xSemaphoreTake(audio_mutex_, portMAX_DELAY);
@@ -150,6 +155,8 @@ void CydLink::Handle(uint8_t type, const uint8_t* p, uint16_t n) {
         if (p[0] == 2) {
             bt_enabled = (p[1] != 0);
             ESP_LOGI(TAG, "Saklar Bluetooth C3 dari CYD: %s", p[1] ? "aktif" : "mati");
+        } else if (p[0] >= 3 && ctrl_cb_) {
+            ctrl_cb_(p[0], p[1]);
         }
     }
     // AIP_BUFFER diterima tapi tidak dipakai: laju kirim diatur lewat waktu real-time di AudioWrite

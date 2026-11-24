@@ -7,6 +7,7 @@
 #include "button.h"
 #include "config.h"
 #include "cyd_status_led.h"
+#include "cyd_setup.h"
 
 #include <esp_log.h>
 #include <esp_timer.h>
@@ -114,6 +115,10 @@ private:
                 esp_restart();
             }
         });
+        link.SetCtrlCallback([](uint8_t item, uint8_t val) {
+            if (item == 3) CydSetup::Request(val != 0);            // mode pengaturan (hotspot CYD-Setup)
+            else if (item == 4) CydSetup::ApplyToCyd();            // CYD minta judul/warna/status terbaru
+        });
         link.SetTickCallback([]() {
             static uint8_t last_state = 255, last_emo = 255;
             static int64_t last_send_us = 0;
@@ -130,7 +135,7 @@ private:
 
             // 1) WiFi tanpa hemat daya saat sedang bercakap (suara tidak tertahan), hemat daya saat diam
             static int last_ps = -1;
-            int want_ps = (st == 1 || st == 2 || st == 3) ? 0 : 1;
+            int want_ps = (st == 1 || st == 2 || st == 3 || CydSetup::Active()) ? 0 : 1;
             if (want_ps != last_ps &&
                 esp_wifi_set_ps(want_ps == 0 ? WIFI_PS_NONE : WIFI_PS_MIN_MODEM) == ESP_OK) {
                 last_ps = want_ps;
@@ -187,27 +192,32 @@ public:
     void InitializeTools() {
         auto& mcp = McpServer::GetInstance();
         mcp.AddTool("self.cyd.open_page",
-            "Open a page on the motorcycle dashboard screen (the CYD). Use when the user asks to open, show, go to, "
-            "or switch to an app or page. page must be exactly one of: home, map, chronos, music, clock, calendar, "
-            "info, settings, menu, assistant. 'map' opens the Montirin navigation map. 'chronos' switches the "
-            "dashboard to Chronos smartwatch mode and restarts it.",
+            "Open a page or app on the motorcycle dashboard screen (the CYD). Use when the user asks to open, show, go to, "
+            "or switch to any app or page. page must be exactly one of: home, map, chronos, music, clock, calendar, "
+            "info, settings, menu, menu2, assistant, calculator, notes, counter, savings, games, animations, alarm, "
+            "stopwatch, timer, ebook, mp3, connections, power. 'menu' is the first app menu and 'menu2' the second app "
+            "menu. 'map' opens the Montirin navigation map. 'music' is the phone media remote, 'mp3' is the music player "
+            "for songs on the SD card. 'ebook' opens the e-book reader. 'savings' is the savings book (tabungan), "
+            "'counter' the tally counter, 'animations' the live wallpaper animations. 'chronos', 'mp3' and 'ebook' "
+            "switch the dashboard to its second firmware and restart it.",
             PropertyList({Property("page", kPropertyTypeString)}),
             [](const PropertyList& properties) -> ReturnValue {
                 std::string page = properties["page"].value<std::string>();
-                uint8_t id = 255;
-                if (page == "home") id = 0;
-                else if (page == "map") id = 1;
-                else if (page == "clock") id = 2;
-                else if (page == "calendar") id = 3;
-                else if (page == "music") id = 4;
-                else if (page == "info") id = 5;
-                else if (page == "assistant") id = 6;
-                else if (page == "settings") id = 7;
-                else if (page == "menu") id = 8;
-                else if (page == "chronos") id = 9;
-                if (id == 255) return false;
-                CydLink::GetInstance().SendNav(id);
-                return true;
+                struct PageId { const char* name; uint8_t id; };
+                static const PageId kPages[] = {
+                    {"home", 0}, {"map", 1}, {"clock", 2}, {"calendar", 3}, {"music", 4}, {"info", 5},
+                    {"assistant", 6}, {"settings", 7}, {"menu", 8}, {"chronos", 9},
+                    {"calculator", 10}, {"notes", 11}, {"counter", 12}, {"savings", 13}, {"games", 14},
+                    {"animations", 15}, {"menu2", 16}, {"alarm", 17}, {"stopwatch", 18}, {"timer", 19},
+                    {"ebook", 20}, {"mp3", 21}, {"connections", 22}, {"power", 23},
+                };
+                for (const auto& p : kPages) {
+                    if (page == p.name) {
+                        CydLink::GetInstance().SendNav(p.id);
+                        return true;
+                    }
+                }
+                return false;
             });
         mcp.AddTool("self.cyd.set_volume",
             "Set the volume of the assistant voice on the dashboard speaker, from 0 to 100 percent.",
