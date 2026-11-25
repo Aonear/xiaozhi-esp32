@@ -14,6 +14,14 @@
 #include <memory>
 #include <string>
 
+#if __has_include(<esp_http_client.h>) && __has_include(<esp_crt_bundle.h>)
+#include <esp_http_client.h>
+#include <esp_crt_bundle.h>
+#define CYD_HAVE_RAW_HTTP 1                 // ikuti alihan (302) seperti alamat archive.org/download
+#else
+#define CYD_HAVE_RAW_HTTP 0
+#endif
+
 #define TAG "CydNet"
 
 namespace {
@@ -75,6 +83,51 @@ void DoSetting(const Req& r) {
     Out(r.id, K_END, nullptr, 0);
 }
 
+#if CYD_HAVE_RAW_HTTP
+// GET dengan klien HTTP bawaan ESP-IDF yang mengikuti alihan 301/302/303/307/308 (maksimal 6 kali)
+void DoRaw(const Req& r) {
+    esp_http_client_config_t cfg = {};
+    cfg.url = r.url.c_str();
+    cfg.timeout_ms = 10000;
+    cfg.crt_bundle_attach = esp_crt_bundle_attach;
+    cfg.buffer_size = 2048;
+    cfg.buffer_size_tx = 1024;
+    cfg.user_agent = "CYD-Dash/1.0";
+    esp_http_client_handle_t c = esp_http_client_init(&cfg);
+    if (!c) { OutErr(r.id, "no http"); return; }
+    int status = 0;
+    bool ok = false;
+    for (int hop = 0; hop < 6 && !Cancelled(r.id); hop++) {
+        if (esp_http_client_open(c, 0) != ESP_OK) { OutErr(r.id, "open gagal"); esp_http_client_cleanup(c); return; }
+        esp_http_client_fetch_headers(c);
+        status = esp_http_client_get_status_code(c);
+        if (status >= 300 && status < 400) {
+            if (esp_http_client_set_redirection(c) != ESP_OK) break;
+            esp_http_client_close(c);
+            continue;
+        }
+        ok = true;
+        break;
+    }
+    if (!ok) { OutErr(r.id, "alihan gagal"); esp_http_client_cleanup(c); return; }
+    uint16_t st = (uint16_t)status;
+    Out(r.id, K_STATUS, (const uint8_t*)&st, 2);
+    static uint8_t rb[1024];
+    int idle = 0;
+    bool good = true;
+    while (!Cancelled(r.id)) {
+        int n = esp_http_client_read(c, (char*)rb, sizeof(rb));
+        if (n > 0) { idle = 0; if (!Push(r.id, rb, n)) { good = false; break; } continue; }
+        if (n == -ESP_ERR_HTTP_EAGAIN && ++idle < 6) continue;
+        if (n < 0 && !esp_http_client_is_complete_data_received(c)) good = false;
+        break;
+    }
+    esp_http_client_close(c);
+    esp_http_client_cleanup(c);
+    if (!Cancelled(r.id)) { if (good) Out(r.id, K_END, nullptr, 0); else OutErr(r.id, "putus"); }
+}
+#endif
+
 void DoHttp(const Req& r) {
     auto http = Board::GetInstance().GetNetwork()->CreateHttp(0);
     if (!http) { OutErr(r.id, "no http"); return; }
@@ -95,6 +148,14 @@ void DoHttp(const Req& r) {
     auto status = http->GetStatusCode();
     if (!status) { OutErr(r.id, "status gagal"); http->Close(); return; }
     uint16_t st = (uint16_t)*status;
+#if CYD_HAVE_RAW_HTTP
+    if (r.op == OP_GET && (st == 301 || st == 302 || st == 303 || st == 307 || st == 308)) {
+        http->Close();
+        http.reset();                       // bebaskan RAM sebelum membuka sambungan TLS kedua
+        DoRaw(r);
+        return;
+    }
+#endif
     Out(r.id, K_STATUS, (const uint8_t*)&st, 2);
     static uint8_t rb[1024];
     bool ok = true;
