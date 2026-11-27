@@ -9,6 +9,7 @@
 #include <esp_timer.h>
 #include <freertos/FreeRTOS.h>
 #include <freertos/semphr.h>
+#include <freertos/queue.h>
 #include <freertos/task.h>
 #include <atomic>
 #include <cstring>
@@ -196,11 +197,108 @@ void Worker(void*) {
         }
     }
 }
+
+// ---- screenshot CYD -> Google Drive (aliran: baris RGB565 dari CYD, dikonversi ke BMP 24-bit, base64, POST ke Apps Script) ----
+struct ShotRow { uint16_t y; uint8_t half; uint8_t d[320]; };
+QueueHandle_t g_shotq = nullptr;
+std::atomic<bool> g_shot_run{false};
+
+void ShotAck(uint8_t kind, uint16_t y = 0) {
+    uint8_t pl[4] = {0, kind, (uint8_t)(y & 0xFF), (uint8_t)(y >> 8)};
+    CydLink::GetInstance().SendNet(pl, kind == 11 ? 4 : 2);
+}
+
+size_t B64(const uint8_t* in, size_t n, char* out) {      // n kelipatan 3
+    static const char t[] = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    size_t o = 0;
+    for (size_t i = 0; i < n; i += 3) {
+        uint32_t v = ((uint32_t)in[i] << 16) | ((uint32_t)in[i + 1] << 8) | in[i + 2];
+        out[o++] = t[(v >> 18) & 63]; out[o++] = t[(v >> 12) & 63]; out[o++] = t[(v >> 6) & 63]; out[o++] = t[v & 63];
+    }
+    return o;
+}
+
+void ShotTask(void*) {
+    bool ok = false;
+    do {
+        std::string url = CydSetup::Get("su", ""), tok = CydSetup::Get("sk", "");
+        if (url.compare(0, 4, "http") != 0 || tok.empty()) { ESP_LOGW(TAG, "shot: URL/token Sheet kosong"); break; }
+        auto http = Board::GetInstance().GetNetwork()->CreateHttp(0);
+        if (!http) break;
+        http->SetTimeout(20000);
+        http->SetHeader("Content-Type", "application/json");
+        http->SetHeader("User-Agent", "CYD-Dash/1.0");
+        if (!http->Open("POST", url)) { ESP_LOGW(TAG, "shot: open gagal"); break; }
+        std::string pre = "{\"token\":\"" + tok + "\",\"shot\":\"";
+        if (!http->Write(pre.data(), pre.size())) break;
+        // kepala BMP 54 bita, 320x240, 24 bit, tinggi negatif (baris dari atas)
+        uint8_t h[54] = {0};
+        const uint32_t pix = 320 * 240 * 3, fsz = 54 + pix;
+        h[0] = 'B'; h[1] = 'M';
+        h[2] = fsz & 0xFF; h[3] = (fsz >> 8) & 0xFF; h[4] = (fsz >> 16) & 0xFF; h[5] = (fsz >> 24) & 0xFF;
+        h[10] = 54; h[14] = 40;
+        h[18] = 320 & 0xFF; h[19] = 320 >> 8;
+        int32_t hh = -240; memcpy(h + 22, &hh, 4);
+        h[26] = 1; h[28] = 24;
+        h[34] = pix & 0xFF; h[35] = (pix >> 8) & 0xFF; h[36] = (pix >> 16) & 0xFF; h[37] = (pix >> 24) & 0xFF;
+        h[38] = 0x13; h[39] = 0x0B; h[42] = 0x13; h[43] = 0x0B;
+        static char out[2700];
+        size_t ol = B64(h, 54, out);
+        ShotAck(10);                                           // siap: CYD boleh mulai mengirim baris
+        ShotRow row;
+        int got = 0;
+        bool fail = false;
+        while (got < 480) {
+            if (xQueueReceive(g_shotq, &row, pdMS_TO_TICKS(6000)) != pdTRUE) { fail = true; break; }
+            uint8_t bgr[480];
+            for (int i = 0; i < 160; i++) {
+                uint16_t px = row.d[2 * i] | (row.d[2 * i + 1] << 8);
+                uint8_t r = (px >> 11) & 31, g = (px >> 5) & 63, b = px & 31;
+                bgr[3 * i] = (b << 3) | (b >> 2);
+                bgr[3 * i + 1] = (g << 2) | (g >> 4);
+                bgr[3 * i + 2] = (r << 3) | (r >> 2);
+            }
+            if (ol + 640 > sizeof(out)) { if (!http->Write(out, ol)) { fail = true; break; } ol = 0; }
+            ol += B64(bgr, 480, out + ol);
+            got++;
+        }
+        if (fail) { http->Close(); break; }
+        out[ol++] = '"'; out[ol++] = '}';
+        if (!http->Write(out, ol)) break;
+        if (!http->Write("", 0)) break;
+        auto st = http->GetStatusCode();
+        ESP_LOGI(TAG, "shot: status %d", st ? (int)*st : -1);
+        ok = st && (*st == 200 || *st == 302 || *st == 301 || *st == 303);
+        http->Close();
+    } while (false);
+    ShotAck(ok ? 12 : 13);
+    g_shot_run = false;
+    vTaskDelete(nullptr);
+}
+
+void ShotRequest(const uint8_t* p, uint16_t n) {
+    uint8_t op = p[0];
+    if (op == 8) {                                             // mulai
+        if (g_shot_run.load()) { ShotAck(13); return; }
+        if (!g_shotq) g_shotq = xQueueCreate(8, sizeof(ShotRow));
+        xQueueReset(g_shotq);
+        g_shot_run = true;
+        if (xTaskCreate(ShotTask, "cyd_shot", 8192, nullptr, 3, nullptr) != pdPASS) { g_shot_run = false; ShotAck(13); }
+    } else if (op == 9 && n >= 5 + 320) {                      // baris: [9, 0, y(2), half, 320 byte]
+        if (!g_shot_run.load() || !g_shotq) return;
+        ShotRow r;
+        r.y = p[2] | (p[3] << 8); r.half = p[4];
+        memcpy(r.d, p + 5, 320);
+        if (xQueueSend(g_shotq, &r, pdMS_TO_TICKS(3000)) == pdTRUE && r.half == 1) ShotAck(11, r.y);
+    }
+}
+
 }  // namespace
 
 void CydNet::OnRequest(const uint8_t* p, uint16_t n) {
     if (n < 2) return;
     uint8_t op = p[0], id = p[1];
+    if (op == 8 || op == 9) { ShotRequest(p, n); return; }
     if (op == OP_CREDIT) {
         if (n >= 4 && id == g_cur_id.load()) {
             int v = p[2] | (p[3] << 8);
@@ -228,7 +326,7 @@ void CydNet::OnRequest(const uint8_t* p, uint16_t n) {
     xSemaphoreGive(g_wake);
 }
 
-bool CydNet::Busy() { return g_busy.load(); }
+bool CydNet::Busy() { return g_busy.load() || g_shot_run.load(); }
 
 void CydNet::Init() {
     if (g_task) return;
