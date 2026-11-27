@@ -1,4 +1,7 @@
 #include "cyd_link.h"
+#include <esp_sntp.h>
+#include <esp_timer.h>
+#include <time.h>
 
 #include <driver/uart.h>
 #include <esp_log.h>
@@ -23,6 +26,7 @@ enum : uint8_t {
     AIP_AUTO = 0x84,    // CYD -> C3: [1 = dengar otomatis (halaman AI terbuka), 0 = mati]
     AIP_POWER = 0x83,   // CYD -> C3: [1 = tidur, 0 = bangun]
     AIP_BUFFER = 0x82,
+    AIP_TIME = 0x0B,    // C3 -> CYD: [epoch lokal WIB (4B LE)] jam dari internet (NTP)
     AIP_NET_DATA = 0x0A,  // C3 -> CYD: [id, jenis, ...] jenis 0 status [2B], 1 data, 2 selesai, 3 gagal
     AIP_NET_REQ = 0x86,   // CYD -> C3: [op, id, ...] op 1 GET, 2 POST, 3 batal, 4 kredit [2B], 5 baca pengaturan
     AIP_CTRL = 0x85,    // CYD -> C3: [butir, nilai]  butir 2 = Bluetooth C3, 3 = mode pengaturan (1 nyala, 0 mati), 4 = minta konfigurasi
@@ -134,6 +138,26 @@ void CydLink::AudioWrite(const int16_t* data, int samples, int rate, int volume_
     xSemaphoreGive(audio_mutex_);
 }
 
+static void TimeTick(CydLink* self, void (*send)(CydLink*, const uint8_t*, uint16_t)) {
+    static int64_t next_us = 0;
+    static bool sntp_started = false;
+    int64_t now_us = esp_timer_get_time();
+    if (now_us < next_us) return;
+    next_us = now_us + 20000000;                    // tiap 20 detik
+    if (!sntp_started) {
+        sntp_started = true;
+        esp_sntp_setoperatingmode(SNTP_OPMODE_POLL);
+        esp_sntp_setservername(0, "pool.ntp.org");
+        esp_sntp_setservername(1, "time.google.com");
+        esp_sntp_init();
+    }
+    time_t t = time(nullptr);
+    if (t < 1700000000) return;                     // belum tersinkron
+    uint32_t local = (uint32_t)t + 7 * 3600;        // WIB (UTC+7)
+    uint8_t pl[4] = {(uint8_t)local, (uint8_t)(local >> 8), (uint8_t)(local >> 16), (uint8_t)(local >> 24)};
+    send(self, pl, 4);
+}
+
 void CydLink::AudioIdleCheck() {
     if (xSemaphoreTake(audio_mutex_, 0) != pdTRUE) return;
     if (streaming_ && esp_timer_get_time() > play_end_us_ + 250000) {
@@ -179,6 +203,7 @@ void CydLink::RxTask() {
         int r = uart_read_bytes(kPort, &b, 1, pdMS_TO_TICKS(100));
         if (r <= 0) {
             AudioIdleCheck();
+            TimeTick(this, [](CydLink* c, const uint8_t* p, uint16_t n) { c->SendTime(p, n); });
             if (tick_cb_) tick_cb_();
             continue;
         }

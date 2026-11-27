@@ -19,7 +19,8 @@ public:
     void SetTickCallback(std::function<void()> cb) { tick_cb_ = cb; }
     void SetPowerCallback(std::function<void(uint8_t)> cb) { power_cb_ = cb; }
     void SetNetCallback(std::function<void(const uint8_t*, uint16_t)> cb) { net_cb_ = cb; }   // paket NET_REQ (0x86) dari CYD
-    void SendNet(const uint8_t* p, uint16_t n) { Send(0x0A, p, n); }                          // NET_DATA ke CYD
+    void SendNet(const uint8_t* p, uint16_t n) { Send(0x0A, p, n); }
+    void SendTime(const uint8_t* p, uint16_t n) { Send(0x0B, p, n); }                        // jam dari internet ke CYD                          // NET_DATA ke CYD
     void SetCtrlCallback(std::function<void(uint8_t, uint8_t)> cb) { ctrl_cb_ = cb; }   // butir CTRL >= 3 (3 = mode pengaturan, 4 = minta konfigurasi)
     std::atomic<bool> bt_enabled{false};     // saklar Bluetooth C3 dari CYD (menu Koneksi); dipakai fitur Bluetooth berikutnya
     std::atomic<bool> auto_listen{false};   // CYD di halaman AI: C3 mulai mendengarkan sendiri (tanpa tombol bicara)   // 1 = tidur, 0 = bangun (dari CYD)
