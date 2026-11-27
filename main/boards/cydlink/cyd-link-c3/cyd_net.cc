@@ -1,4 +1,5 @@
 #include "cyd_net.h"
+#include <time.h>
 #include "cyd_link.h"
 #include "cyd_setup.h"
 #include "board.h"
@@ -76,7 +77,13 @@ bool Push(uint8_t id, const uint8_t* d, int n) {
 }
 
 void DoSetting(const Req& r) {
-    std::string v = CydSetup::Get(r.url.c_str(), "");
+    std::string v;
+    if (r.url == "tm") {                                   // jam dari internet (epoch lokal WIB), kosong bila belum tersinkron
+        time_t t = time(nullptr);
+        if (t > 1700000000) v = std::to_string((long long)t + 7 * 3600);
+    } else {
+        v = CydSetup::Get(r.url.c_str(), "");
+    }
     uint16_t st = 200;
     Out(r.id, K_STATUS, (const uint8_t*)&st, 2);
     if (!v.empty()) Push(r.id, (const uint8_t*)v.data(), (int)v.size());
