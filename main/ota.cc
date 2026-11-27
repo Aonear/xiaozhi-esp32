@@ -211,7 +211,7 @@ NetworkResult<> Ota::CheckVersion() {
             
             // 如果有时区偏移，计算本地时间
             if (cJSON_IsNumber(timezone_offset)) {
-                ts += (timezone_offset->valueint * 60 * 1000); // 转换分钟为毫秒
+                // jam sistem dibiarkan UTC; CYD menambah +7 sendiri (cyd_link.cc)
             }
             
             tv.tv_sec = (time_t)(ts / 1000);  // 转换毫秒为秒

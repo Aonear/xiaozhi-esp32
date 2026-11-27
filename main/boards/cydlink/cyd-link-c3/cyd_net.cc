@@ -1,3 +1,4 @@
+#include <esp_system.h>
 #include "cyd_net.h"
 #include <time.h>
 #include "cyd_link.h"
@@ -205,7 +206,7 @@ std::atomic<bool> g_shot_run{false};
 
 void ShotAck(uint8_t kind, uint16_t y = 0) {
     uint8_t pl[4] = {0, kind, (uint8_t)(y & 0xFF), (uint8_t)(y >> 8)};
-    CydLink::GetInstance().SendNet(pl, kind == 11 ? 4 : 2);
+    CydLink::GetInstance().SendNet(pl, (kind == 11 || kind == 13) ? 4 : 2);
 }
 
 size_t B64(const uint8_t* in, size_t n, char* out) {      // n kelipatan 3
@@ -220,17 +221,18 @@ size_t B64(const uint8_t* in, size_t n, char* out) {      // n kelipatan 3
 
 void ShotTask(void*) {
     bool ok = false;
+    int why = 9;
     do {
         std::string url = CydSetup::Get("su", ""), tok = CydSetup::Get("sk", "");
-        if (url.compare(0, 4, "http") != 0 || tok.empty()) { ESP_LOGW(TAG, "shot: URL/token Sheet kosong"); break; }
+        if (url.compare(0, 4, "http") != 0 || tok.empty()) { ESP_LOGW(TAG, "shot: URL/token Sheet kosong"); why = 1; break; }
         auto http = Board::GetInstance().GetNetwork()->CreateHttp(0);
-        if (!http) break;
+        if (!http) { why = 2; break; }
         http->SetTimeout(20000);
         http->SetHeader("Content-Type", "application/json");
         http->SetHeader("User-Agent", "CYD-Dash/1.0");
-        if (!http->Open("POST", url)) { ESP_LOGW(TAG, "shot: open gagal"); break; }
+        if (!http->Open("POST", url)) { ESP_LOGW(TAG, "shot: open gagal, heap %u", (unsigned)esp_get_free_heap_size()); why = 3; break; }
         std::string pre = "{\"token\":\"" + tok + "\",\"shot\":\"";
-        if (!http->Write(pre.data(), pre.size())) break;
+        if (!http->Write(pre.data(), pre.size())) { why = 4; break; }
         // kepala BMP 54 bita, 320x240, 24 bit, tinggi negatif (baris dari atas)
         uint8_t h[54] = {0};
         const uint32_t pix = 320 * 240 * 3, fsz = 54 + pix;
@@ -249,7 +251,7 @@ void ShotTask(void*) {
         int got = 0;
         bool fail = false;
         while (got < 480) {
-            if (xQueueReceive(g_shotq, &row, pdMS_TO_TICKS(6000)) != pdTRUE) { fail = true; break; }
+            if (xQueueReceive(g_shotq, &row, pdMS_TO_TICKS(6000)) != pdTRUE) { fail = true; why = 7; break; }
             uint8_t bgr[480];
             for (int i = 0; i < 160; i++) {
                 uint16_t px = row.d[2 * i] | (row.d[2 * i + 1] << 8);
@@ -271,7 +273,7 @@ void ShotTask(void*) {
         ok = st && (*st == 200 || *st == 302 || *st == 301 || *st == 303);
         http->Close();
     } while (false);
-    ShotAck(ok ? 12 : 13);
+    if (ok) ShotAck(12); else ShotAck(13, why);
     g_shot_run = false;
     vTaskDelete(nullptr);
 }
