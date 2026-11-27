@@ -57,6 +57,11 @@ button.g{background:#2a3144;color:#e8eaee}small{color:#8b93a1;display:block}
 <input id="sk" placeholder="token rahasia">
 <button onclick="save(['su','sk'])">Simpan tabungan</button>
 
+<h2>Telegram</h2>
+<small>Buat bot lewat @BotFather, tempel token-nya. Kirim pesan ke bot dari Telegram, pesannya tampil di CYD (slot 1). ID chat boleh dikosongkan; isi bila hanya mau menerima dari satu orang.</small>
+<input id="tt" placeholder="token bot (123456:ABC...)"><input id="tc" placeholder="ID chat (opsional)">
+<button onclick="save(['tt','tc'])">Simpan Telegram</button>
+
 <h2>Tampilan CYD</h2>
 <input id="ti" maxlength="24" placeholder="Nama / sapaan (maks 24 huruf)">
 <small>Warna aksen halaman TFT</small><input type="color" id="ac" value="#00c896">
@@ -72,7 +77,7 @@ button.g{background:#2a3144;color:#e8eaee}small{color:#8b93a1;display:block}
 <script>
 const $=i=>document.getElementById(i);
 function load(){fetch('/api/get').then(r=>r.json()).then(d=>{
- $('st2').value=d.st||'';$('lo').checked=d.lo==='1';$('su').value=d.su||'';$('sk').value=d.sk||'';
+ $('st2').value=d.st||'';$('lo').checked=d.lo==='1';$('su').value=d.su||'';$('sk').value=d.sk||'';$('tt').value=d.tt||'';$('tc').value=d.tc||'';
  $('ti').value=d.ti||'';$('ac').value='#'+(d.ac||'00c896');
  $('st').textContent='IP '+d.ip+'  |  sinyal '+d.rssi+' dBm\nRAM bebas '+d.heap+' KB  |  WiFi: '+(d.ssid||'-')});}
 function save(keys){const o={};
@@ -137,7 +142,7 @@ static esp_err_t HandleRoot(httpd_req_t* req) {
 }
 static esp_err_t HandleGet(httpd_req_t* req) {
     cJSON* o = cJSON_CreateObject();
-    static const char* keys[] = {"st", "lo", "su", "sk", "ti", "ac"};
+    static const char* keys[] = {"st", "lo", "su", "sk", "ti", "ac", "tt", "tc"};
     for (const char* k : keys) cJSON_AddStringToObject(o, k, CydSetup::Get(k).c_str());
     esp_netif_ip_info_t ip = {};
     esp_netif_t* sta = esp_netif_get_handle_from_ifkey("WIFI_STA_DEF");
@@ -169,7 +174,7 @@ static esp_err_t HandleSet(httpd_req_t* req) {
     cJSON* o = ok ? cJSON_Parse(buf) : nullptr;
     free(buf);
     if (!o) { httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "bad"); return ESP_FAIL; }
-    static const char* keys[] = {"st", "lo", "su", "sk", "ti", "ac"};
+    static const char* keys[] = {"st", "lo", "su", "sk", "ti", "ac", "tt", "tc"};
     for (const char* k : keys) {
         cJSON* it = cJSON_GetObjectItem(o, k);
         if (cJSON_IsString(it) && it->valuestring) {

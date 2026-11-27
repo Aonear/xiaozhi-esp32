@@ -20,6 +20,7 @@ public:
     void SetPowerCallback(std::function<void(uint8_t)> cb) { power_cb_ = cb; }
     void SetNetCallback(std::function<void(const uint8_t*, uint16_t)> cb) { net_cb_ = cb; }   // paket NET_REQ (0x86) dari CYD
     void SendNet(const uint8_t* p, uint16_t n) { Send(0x0A, p, n); }
+    void SendTg(const uint8_t* p, uint16_t n) { Send(0x0C, p, n); }                          // pesan Telegram ke CYD [id(4), teks]
     void SendTime(const uint8_t* p, uint16_t n) { Send(0x0B, p, n); }                        // jam dari internet ke CYD                          // NET_DATA ke CYD
     void SetCtrlCallback(std::function<void(uint8_t, uint8_t)> cb) { ctrl_cb_ = cb; }   // butir CTRL >= 3 (3 = mode pengaturan, 4 = minta konfigurasi)
     std::atomic<bool> bt_enabled{false};     // saklar Bluetooth C3 dari CYD (menu Koneksi); dipakai fitur Bluetooth berikutnya

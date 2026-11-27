@@ -5,6 +5,8 @@
 #include "cyd_setup.h"
 #include "board.h"
 #include "http.h"
+#include "application.h"
+#include <cJSON.h>
 
 #include <esp_log.h>
 #include <esp_timer.h>
@@ -295,12 +297,84 @@ void ShotRequest(const uint8_t* p, uint16_t n) {
     }
 }
 
+// ---- Telegram: ambil pesan bot (getUpdates, satu per satu), teruskan ke CYD; maju hanya setelah CYD mengakui (op 6) ----
+std::atomic<uint32_t> g_tg_ack{0};
+void TgTask(void*) {
+    vTaskDelay(pdMS_TO_TICKS(30000));
+    static char body[3072];
+    for (;;) {
+        vTaskDelay(pdMS_TO_TICKS(10000));
+        std::string tok = CydSetup::Get("tt", "");
+        if (tok.empty()) continue;
+        if (g_busy.load() || g_shot_run.load()) continue;
+        if (Application::GetInstance().GetDeviceState() != kDeviceStateIdle) continue;   // jangan ganggu percakapan AI
+        uint32_t ack = g_tg_ack.load();
+        char url[256];
+        if (ack > 0) snprintf(url, sizeof(url), "https://api.telegram.org/bot%s/getUpdates?limit=1&timeout=0&offset=%u", tok.c_str(), (unsigned)(ack + 1));
+        else snprintf(url, sizeof(url), "https://api.telegram.org/bot%s/getUpdates?limit=1&timeout=0", tok.c_str());
+        int n = 0;
+        {
+            auto http = Board::GetInstance().GetNetwork()->CreateHttp(0);
+            if (!http) continue;
+            http->SetTimeout(8000);
+            http->SetHeader("Accept-Encoding", "identity");
+            http->SetHeader("User-Agent", "CYD-Dash/1.0");
+            if (!http->Open("GET", url)) continue;
+            auto st = http->GetStatusCode();
+            if (!st || *st != 200) { ESP_LOGW(TAG, "telegram status %d", st ? (int)*st : -1); http->Close(); continue; }
+            while (n < (int)sizeof(body) - 1) {
+                auto r = http->Read(body + n, sizeof(body) - 1 - n);
+                if (!r || *r <= 0) break;
+                n += *r;
+            }
+            http->Close();
+        }
+        body[n] = 0;
+        cJSON* root = cJSON_Parse(body);
+        if (!root) continue;
+        cJSON* first = cJSON_GetArrayItem(cJSON_GetObjectItem(root, "result"), 0);
+        if (first) {
+            cJSON* uid = cJSON_GetObjectItem(first, "update_id");
+            cJSON* msg = cJSON_GetObjectItem(first, "message");
+            uint32_t id = cJSON_IsNumber(uid) ? (uint32_t)uid->valuedouble : 0;
+            if (id) {
+                std::string text, name;
+                bool allowed = true;
+                if (msg) {
+                    cJSON* t = cJSON_GetObjectItem(msg, "text");
+                    cJSON* fn = cJSON_GetObjectItem(cJSON_GetObjectItem(msg, "from"), "first_name");
+                    cJSON* ch = cJSON_GetObjectItem(cJSON_GetObjectItem(msg, "chat"), "id");
+                    text = cJSON_IsString(t) ? t->valuestring : "[bukan teks]";
+                    name = cJSON_IsString(fn) ? fn->valuestring : "";
+                    std::string tc = CydSetup::Get("tc", "");
+                    if (!tc.empty() && cJSON_IsNumber(ch) && atoll(tc.c_str()) != (long long)ch->valuedouble) allowed = false;
+                }
+                if (!msg || !allowed) {
+                    g_tg_ack = id;                                   // bukan untuk kita: lewati
+                } else {
+                    std::string line = name.empty() ? text : name + ": " + text;
+                    if (line.size() > 150) line.resize(150);
+                    uint8_t pl[4 + 150];
+                    pl[0] = id & 0xFF; pl[1] = (id >> 8) & 0xFF; pl[2] = (id >> 16) & 0xFF; pl[3] = (id >> 24) & 0xFF;
+                    memcpy(pl + 4, line.data(), line.size());
+                    CydLink::GetInstance().SendTg(pl, (uint16_t)(4 + line.size()));
+                }
+            }
+        }
+        cJSON_Delete(root);
+    }
+}
+
 }  // namespace
 
 void CydNet::OnRequest(const uint8_t* p, uint16_t n) {
     if (n < 2) return;
     uint8_t op = p[0], id = p[1];
     if (op == 8 || op == 9) { ShotRequest(p, n); return; }
+    if (op == 6) {                                           // CYD mengakui pesan Telegram: [6, 0, id(4)]
+        if (n >= 6) { uint32_t v = p[2] | (p[3] << 8) | (p[4] << 16) | ((uint32_t)p[5] << 24); if (v > g_tg_ack.load()) g_tg_ack = v; }
+        return;
+    }
     if (op == OP_CREDIT) {
         if (n >= 4 && id == g_cur_id.load()) {
             int v = p[2] | (p[3] << 8);
@@ -335,5 +409,6 @@ void CydNet::Init() {
     g_mu = xSemaphoreCreateMutex();
     g_wake = xSemaphoreCreateBinary();
     xTaskCreate(Worker, "cyd_net", 8192, nullptr, 3, &g_task);
+    xTaskCreate(TgTask, "cyd_tg", 8192, nullptr, 2, nullptr);
     CydLink::GetInstance().SetNetCallback([](const uint8_t* p, uint16_t n) { CydNet::OnRequest(p, n); });
 }
