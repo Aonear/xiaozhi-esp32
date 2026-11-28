@@ -298,6 +298,33 @@ void ShotRequest(const uint8_t* p, uint16_t n) {
 }
 
 // ---- Telegram: ambil pesan bot (getUpdates, satu per satu), teruskan ke CYD; maju hanya setelah CYD mengakui (op 6) ----
+
+// ---- FetchText: GET sederhana untuk alat AI (hasil dikembalikan ke LLM) ----
+struct FetchJob { const char* url; std::string* out; size_t cap; int timeout; bool ok; SemaphoreHandle_t done; };
+void FetchTask(void* a) {
+    FetchJob* j = (FetchJob*)a;
+    auto http = Board::GetInstance().GetNetwork()->CreateHttp(0);
+    if (http) {
+        http->SetTimeout(j->timeout);
+        http->SetHeader("Accept-Encoding", "identity");
+        http->SetHeader("User-Agent", "CYD-Dash/1.0");
+        if (http->Open("GET", j->url)) {
+            auto st = http->GetStatusCode();
+            if (st && *st == 200) {
+                char buf[512];
+                while (j->out->size() < j->cap) {
+                    auto r = http->Read(buf, sizeof buf);
+                    if (!r || *r <= 0) break;
+                    j->out->append(buf, *r);
+                }
+                j->ok = true;
+            }
+            http->Close();
+        }
+    }
+    xSemaphoreGive(j->done);
+    vTaskDelete(nullptr);
+}
 std::atomic<uint32_t> g_tg_ack{0};
 void TgTask(void*) {
     vTaskDelay(pdMS_TO_TICKS(30000));
@@ -403,6 +430,17 @@ void CydNet::OnRequest(const uint8_t* p, uint16_t n) {
 }
 
 bool CydNet::Busy() { return g_busy.load() || g_shot_run.load(); }
+
+bool CydNet::FetchText(const char* url, std::string& out, size_t cap, int timeout_ms) {
+    if (esp_get_free_heap_size() < 45000) return false;
+    out.clear();
+    FetchJob j{url, &out, cap, timeout_ms, false, xSemaphoreCreateBinary()};
+    if (!j.done) return false;
+    if (xTaskCreate(FetchTask, "cyd_fetch", 8192, &j, 3, nullptr) != pdPASS) { vSemaphoreDelete(j.done); return false; }
+    xSemaphoreTake(j.done, portMAX_DELAY);
+    vSemaphoreDelete(j.done);
+    return j.ok;
+}
 
 void CydNet::Init() {
     if (g_task) return;

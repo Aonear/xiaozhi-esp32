@@ -22,6 +22,8 @@
 #include <freertos/FreeRTOS.h>
 #include <freertos/task.h>
 #include <cstring>
+#include <cJSON.h>
+#include <cstdio>
 
 #define TAG "CydLinkC3Board"
 
@@ -234,6 +236,137 @@ public:
             [](const PropertyList& properties) -> ReturnValue {
                 CydLink::GetInstance().SendSet(1, (uint8_t)properties["brightness"].value<int>());
                 return true;
+            });
+
+        // ---- alat AI: tulis ke CYD (perintah suara 0x0D) ----
+        mcp.AddTool("self.cyd.add_saving",
+            "Record a savings-book (tabungan) entry on the dashboard. type is 'masuk' (money in) or 'keluar' (money out); "
+            "amount in rupiah as a whole number; description is a short label.",
+            PropertyList({Property("type", kPropertyTypeString), Property("amount", kPropertyTypeInteger, 1, 999999999),
+                          Property("description", kPropertyTypeString, std::string(""))}),
+            [](const PropertyList& p) -> ReturnValue {
+                std::string t = p["type"].value<std::string>();
+                std::string d = p["description"].value<std::string>();
+                if (d.size() > 40) d.resize(40);
+                uint32_t a = (uint32_t)p["amount"].value<int>();
+                uint8_t b[160]; size_t n = 0;
+                b[n++] = 1; b[n++] = (t == "keluar") ? 1 : 0;
+                for (int i = 0; i < 4; i++) b[n++] = (a >> (8 * i)) & 0xFF;
+                memcpy(b + n, d.c_str(), d.size()); n += d.size(); b[n++] = 0;
+                CydLink::GetInstance().SendCmd(b, n);
+                return true;
+            });
+        mcp.AddTool("self.cyd.counter_add",
+            "Change one tally counter on the dashboard. category is A, B, C, D or E; delta is the amount to add (negative to subtract).",
+            PropertyList({Property("category", kPropertyTypeString), Property("delta", kPropertyTypeInteger, 1, -100, 100)}),
+            [](const PropertyList& p) -> ReturnValue {
+                std::string c = p["category"].value<std::string>();
+                if (c.empty() || c[0] < 'A' || (c[0] > 'E' && (c[0] < 'a' || c[0] > 'e'))) return false;
+                uint8_t row = (c[0] >= 'a' ? c[0] - 'a' : c[0] - 'A');
+                uint8_t b[3] = {2, row, (uint8_t)(int8_t)p["delta"].value<int>()};
+                CydLink::GetInstance().SendCmd(b, 3);
+                return true;
+            });
+        mcp.AddTool("self.cyd.add_note",
+            "Save a new note on the dashboard notes app. title may be empty; text is the note body.",
+            PropertyList({Property("title", kPropertyTypeString, std::string("")), Property("text", kPropertyTypeString)}),
+            [](const PropertyList& p) -> ReturnValue {
+                std::string t = p["title"].value<std::string>(), x = p["text"].value<std::string>();
+                if (t.size() > 30) t.resize(30);
+                if (x.size() > 110) x.resize(110);
+                uint8_t b[160]; size_t n = 0;
+                b[n++] = 3;
+                memcpy(b + n, t.c_str(), t.size()); n += t.size(); b[n++] = 0;
+                memcpy(b + n, x.c_str(), x.size()); n += x.size(); b[n++] = 0;
+                CydLink::GetInstance().SendCmd(b, n);
+                return true;
+            });
+        mcp.AddTool("self.cyd.take_screenshot",
+            "Take a screenshot of the dashboard screen and send it to the user's Telegram/Drive.",
+            PropertyList(),
+            [](const PropertyList&) -> ReturnValue {
+                uint8_t b[1] = {4};
+                CydLink::GetInstance().SendCmd(b, 1);
+                return true;
+            });
+        mcp.AddTool("self.cyd.media_control",
+            "Control phone media playback from the dashboard. action: 'playpause', 'next' or 'previous'.",
+            PropertyList({Property("action", kPropertyTypeString)}),
+            [](const PropertyList& p) -> ReturnValue {
+                std::string a = p["action"].value<std::string>();
+                uint8_t k = a == "next" ? 2 : a == "previous" ? 3 : 1;
+                uint8_t b[2] = {5, k};
+                CydLink::GetInstance().SendCmd(b, 2);
+                return true;
+            });
+
+        // ---- alat AI: data online (hasil dibacakan AI) ----
+        mcp.AddTool("self.data.get_weather",
+            "Get current weather and today's forecast for Tangerang (temperature, rain chance, wind).",
+            PropertyList(),
+            [](const PropertyList&) -> ReturnValue {
+                std::string s;
+                if (!CydNet::FetchText("https://api.open-meteo.com/v1/forecast?latitude=-6.18&longitude=106.63"
+                        "&current=temperature_2m,relative_humidity_2m,wind_speed_10m,weather_code"
+                        "&daily=temperature_2m_max,temperature_2m_min,precipitation_probability_max&timezone=Asia%2FJakarta&forecast_days=1",
+                        s, 3000, 8000)) return std::string("Gagal mengambil data cuaca.");
+                return s;
+            });
+        mcp.AddTool("self.data.get_prayer_times",
+            "Get today's prayer (sholat) times for Tangerang.",
+            PropertyList(),
+            [](const PropertyList&) -> ReturnValue {
+                std::string s;
+                if (!CydNet::FetchText("https://api.aladhan.com/v1/timingsByCity?city=Tangerang&country=Indonesia&method=20",
+                        s, 3000, 8000)) return std::string("Gagal mengambil jadwal sholat.");
+                size_t i = s.find("\"timings\"");
+                if (i != std::string::npos) { size_t e = s.find('}', i); if (e != std::string::npos) return s.substr(i, e - i + 1); }
+                return s.substr(0, 600);
+            });
+        mcp.AddTool("self.data.get_exchange_rate",
+            "Get the rupiah (IDR) exchange rate of USD, EUR, SGD, JPY and others.",
+            PropertyList(),
+            [](const PropertyList&) -> ReturnValue {
+                std::string s;
+                if (!CydNet::FetchText("https://open.er-api.com/v6/latest/USD", s, 6000, 8000))
+                    return std::string("Gagal mengambil kurs.");
+                cJSON* r = cJSON_Parse(s.c_str());
+                std::string out = "Gagal membaca kurs.";
+                if (r) {
+                    cJSON* rt = cJSON_GetObjectItem(r, "rates");
+                    cJSON* idr = cJSON_GetObjectItem(rt, "IDR");
+                    if (cJSON_IsNumber(idr)) {
+                        char buf[200];
+                        double u = idr->valuedouble;
+                        snprintf(buf, sizeof buf, "1 USD = %.0f IDR", u);
+                        out = buf;
+                        static const char* cur[] = {"EUR", "SGD", "JPY", "MYR", "SAR", "AUD"};
+                        for (auto c : cur) {
+                            cJSON* x = cJSON_GetObjectItem(rt, c);
+                            if (cJSON_IsNumber(x) && x->valuedouble > 0) { snprintf(buf, sizeof buf, "; 1 %s = %.0f IDR", c, u / x->valuedouble); out += buf; }
+                        }
+                    }
+                    cJSON_Delete(r);
+                }
+                return out;
+            });
+        mcp.AddTool("self.data.get_news",
+            "Get the latest Indonesian news headlines (Antara).",
+            PropertyList(),
+            [](const PropertyList&) -> ReturnValue {
+                std::string s;
+                CydNet::FetchText("https://www.antaranews.com/rss/terkini.xml", s, 9000, 8000);
+                if (s.empty()) return std::string("Gagal mengambil berita.");
+                std::string out; int cnt = 0; size_t pos = s.find("<item>");
+                while (pos != std::string::npos && cnt < 6) {
+                    size_t a = s.find("<title>", pos), e = a == std::string::npos ? a : s.find("</title>", a);
+                    if (e == std::string::npos) break;
+                    std::string t = s.substr(a + 7, e - a - 7);
+                    if (t.rfind("<![CDATA[", 0) == 0) { t = t.substr(9); size_t k = t.find("]]>"); if (k != std::string::npos) t.resize(k); }
+                    out += std::to_string(++cnt) + ". " + t + "\n";
+                    pos = s.find("<item>", e);
+                }
+                return out.empty() ? std::string("Tidak ada berita.") : out;
             });
     }
 
